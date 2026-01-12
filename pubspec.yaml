@@ -51,6 +51,15 @@ dependencies:
   # Date formatting
   intl: ^0.19.0
 
+  # Speech recognition
+  speech_to_text: ^7.0.0
+
+  # HTTP for LLM API
+  http: ^1.2.0
+
+  # Persistent storage for API keys
+  shared_preferences: ^2.2.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

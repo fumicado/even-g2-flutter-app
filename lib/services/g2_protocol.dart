@@ -341,4 +341,317 @@ class G2Protocol {
   }
 
   List<String> splitTextIntoPages(String text) => formatText(text);
+
+  // ============================================
+  // Dashboard / Widget Functions (Service 0x07-20)
+  // ============================================
+
+  /// Build dashboard widget packet (Service 0x07-20)
+  /// Shows time, date, weather etc on the glasses
+  List<int> buildDashboardWidget({
+    String? time,
+    String? date,
+    String? weather,
+    int? temperature,
+  }) {
+    final msgId = nextMessageId;
+    final seq = nextSequenceId;
+    final msgIdVarint = encodeVarint(msgId);
+
+    // Build widget content
+    final content = <int>[];
+
+    // Time widget (field 1)
+    if (time != null) {
+      final timeBytes = utf8.encode(time);
+      content.addAll([0x0A, timeBytes.length, ...timeBytes]);
+    }
+
+    // Date widget (field 2)
+    if (date != null) {
+      final dateBytes = utf8.encode(date);
+      content.addAll([0x12, dateBytes.length, ...dateBytes]);
+    }
+
+    // Weather widget (field 3)
+    if (weather != null) {
+      final weatherBytes = utf8.encode(weather);
+      content.addAll([0x1A, weatherBytes.length, ...weatherBytes]);
+    }
+
+    // Temperature (field 4)
+    if (temperature != null) {
+      content.addAll([0x20, ...encodeVarint(temperature)]);
+    }
+
+    final payload = [0x08, 0x01, 0x10, ...msgIdVarint, 0x1A, content.length, ...content];
+    return _addCrc([0xAA, 0x21, seq, payload.length + 2, 0x01, 0x01, 0x07, 0x20, ...payload]);
+  }
+
+  // ============================================
+  // Quick Text / Notification Functions
+  // ============================================
+
+  /// Build quick text display (simplified teleprompter for short messages)
+  List<int> buildQuickText(String text, {int displayDuration = 5}) {
+    final msgId = nextMessageId;
+    final seq = nextSequenceId;
+    final msgIdVarint = encodeVarint(msgId);
+
+    final textBytes = utf8.encode(text);
+    final textLenVarint = encodeVarint(textBytes.length);
+
+    // Quick text uses teleprompter service with type=2
+    final content = [
+      0x08, 0x01, // Type: quick text
+      0x10, ...encodeVarint(displayDuration), // Duration in seconds
+      0x1A, ...textLenVarint, ...textBytes, // Text content
+    ];
+
+    final payload = [0x08, 0x02, 0x10, ...msgIdVarint, 0x1A, content.length, ...content];
+    return _addCrc([0xAA, 0x21, seq, payload.length + 2, 0x01, 0x01, 0x06, 0x20, ...payload]);
+  }
+
+  /// Build notification display
+  List<int> buildNotification({
+    required String appName,
+    required String title,
+    String? message,
+    int notificationCount = 1,
+  }) {
+    final msgId = nextMessageId;
+    final seq = nextSequenceId;
+    final msgIdVarint = encodeVarint(msgId);
+
+    final appBytes = utf8.encode(appName);
+    final titleBytes = utf8.encode(title);
+
+    final content = <int>[
+      0x0A, appBytes.length, ...appBytes, // App name
+      0x12, titleBytes.length, ...titleBytes, // Title
+    ];
+
+    if (message != null) {
+      final msgBytes = utf8.encode(message);
+      content.addAll([0x1A, msgBytes.length, ...msgBytes]);
+    }
+
+    content.addAll([0x20, ...encodeVarint(notificationCount)]); // Count
+
+    final payload = [0x08, 0x01, 0x10, ...msgIdVarint, 0x22, content.length, ...content];
+    return _addCrc([0xAA, 0x21, seq, payload.length + 2, 0x01, 0x01, 0x07, 0x20, ...payload]);
+  }
+
+  // ============================================
+  // AI Response Functions (0x4E Command - Official Protocol)
+  // ============================================
+
+  int _aiSequence = 0;
+
+  /// Build AI transcription display (for speech-to-text)
+  List<int> buildTranscription(String text, {bool isFinal = false}) {
+    final msgId = nextMessageId;
+    final seq = nextSequenceId;
+    final msgIdVarint = encodeVarint(msgId);
+
+    final textBytes = utf8.encode(text);
+    final textLenVarint = encodeVarint(textBytes.length);
+
+    final content = [
+      0x08, isFinal ? 0x01 : 0x00, // Is final transcription
+      0x12, ...textLenVarint, ...textBytes, // Text
+    ];
+
+    final payload = [0x08, 0x01, 0x10, ...msgIdVarint, 0x1A, content.length, ...content];
+    return _addCrc([0xAA, 0x21, seq, payload.length + 2, 0x01, 0x01, 0x0B, 0x20, ...payload]);
+  }
+
+  /// Build AI response display using 0x4E command (Official Even Demo App protocol)
+  ///
+  /// Screen status (newscreen field):
+  /// - 0x31: New content + Even AI displaying (auto mode)
+  /// - 0x41: New content + Even AI display complete (last page)
+  /// - 0x51: New content + Even AI manual mode
+  /// - 0x61: New content + Network error state
+  /// - 0x71: New content + Text Show state
+  List<List<int>> buildAIResponse(String response, {bool isStreaming = false}) {
+    final packets = <List<int>>[];
+    final textBytes = utf8.encode(response);
+
+    // Calculate pages (max ~100 bytes per page for display)
+    const maxBytesPerPage = 100;
+    final totalPages = (textBytes.length / maxBytesPerPage).ceil().clamp(1, 255);
+
+    for (var pageNum = 0; pageNum < totalPages; pageNum++) {
+      final seq = _aiSequence;
+      _aiSequence = (_aiSequence + 1) & 0xFF;
+
+      // Calculate byte range for this page
+      final startByte = pageNum * maxBytesPerPage;
+      final endByte = ((pageNum + 1) * maxBytesPerPage).clamp(0, textBytes.length);
+      final pageData = textBytes.sublist(startByte, endByte);
+
+      // Calculate character position (16-bit, split into 2 bytes)
+      final charPos = startByte;
+      final charPos0 = charPos & 0xFF;
+      final charPos1 = (charPos >> 8) & 0xFF;
+
+      // Screen status:
+      // - 0x31: Even AI displaying (streaming/intermediate)
+      // - 0x41: Even AI complete (final page)
+      int screenStatus;
+      if (pageNum == totalPages - 1 && !isStreaming) {
+        screenStatus = 0x41; // Last page, complete
+      } else {
+        screenStatus = 0x31; // Intermediate page, streaming
+      }
+
+      // Build 0x4E command packet
+      // Format: [0x4E] [seq] [total_pkg] [current_pkg] [newscreen] [char_pos0] [char_pos1] [current_page] [max_page] [data...]
+      final packet = <int>[
+        0x4E,                    // Command type: AI Result
+        seq,                     // Sequence number
+        totalPages,              // Total packages
+        pageNum,                 // Current package (0-indexed)
+        screenStatus,            // Screen status
+        charPos0,                // Character position low byte
+        charPos1,                // Character position high byte
+        pageNum,                 // Current page number
+        totalPages,              // Max page number
+        ...pageData,             // Actual text data
+      ];
+
+      packets.add(packet);
+    }
+
+    return packets;
+  }
+
+  /// Build single-page AI response (simple version for short responses)
+  List<int> buildAIResponseSimple(String response, {bool isComplete = true}) {
+    final textBytes = utf8.encode(response);
+    final seq = _aiSequence;
+    _aiSequence = (_aiSequence + 1) & 0xFF;
+
+    // Screen status: 0x41 = complete, 0x31 = streaming
+    final screenStatus = isComplete ? 0x41 : 0x31;
+
+    return [
+      0x4E,           // Command type
+      seq,            // Sequence
+      0x01,           // Total packages: 1
+      0x00,           // Current package: 0
+      screenStatus,   // Screen status
+      0x00,           // Char pos low
+      0x00,           // Char pos high
+      0x00,           // Current page
+      0x01,           // Max page
+      ...textBytes,   // Text data
+    ];
+  }
+
+  // ============================================
+  // Navigation Functions
+  // ============================================
+
+  /// Build navigation direction display
+  List<int> buildNavigation({
+    required NavigationDirection direction,
+    required String distance,
+    String? streetName,
+  }) {
+    final msgId = nextMessageId;
+    final seq = nextSequenceId;
+    final msgIdVarint = encodeVarint(msgId);
+
+    final distanceBytes = utf8.encode(distance);
+
+    final content = <int>[
+      0x08, direction.index, // Direction enum
+      0x12, distanceBytes.length, ...distanceBytes, // Distance
+    ];
+
+    if (streetName != null) {
+      final streetBytes = utf8.encode(streetName);
+      content.addAll([0x1A, streetBytes.length, ...streetBytes]);
+    }
+
+    final payload = [0x08, 0x01, 0x10, ...msgIdVarint, 0x1A, content.length, ...content];
+    return _addCrc([0xAA, 0x21, seq, payload.length + 2, 0x01, 0x01, 0x07, 0x20, ...payload]);
+  }
+
+  // ============================================
+  // Settings Functions (Service 0x0D-00)
+  // ============================================
+
+  /// Build brightness adjustment packet
+  List<int> buildBrightnessControl(int brightness) {
+    final msgId = nextMessageId;
+    final seq = nextSequenceId;
+    final msgIdVarint = encodeVarint(msgId);
+
+    // Brightness 0-100
+    final level = brightness.clamp(0, 100);
+
+    final payload = [
+      0x08, 0x01, // Type: brightness
+      0x10, ...msgIdVarint,
+      0x18, level, // Brightness level
+    ];
+
+    return _addCrc([0xAA, 0x21, seq, payload.length + 2, 0x01, 0x01, 0x0D, 0x00, ...payload]);
+  }
+
+  /// Build display position adjustment
+  List<int> buildPositionControl({int x = 0, int y = 0}) {
+    final msgId = nextMessageId;
+    final seq = nextSequenceId;
+    final msgIdVarint = encodeVarint(msgId);
+
+    final payload = [
+      0x08, 0x02, // Type: position
+      0x10, ...msgIdVarint,
+      0x18, ...encodeVarint(x + 128), // X offset (centered at 128)
+      0x20, ...encodeVarint(y + 128), // Y offset (centered at 128)
+    ];
+
+    return _addCrc([0xAA, 0x21, seq, payload.length + 2, 0x01, 0x01, 0x0D, 0x00, ...payload]);
+  }
+
+  // ============================================
+  // Display Control (Service 0x04-20)
+  // ============================================
+
+  /// Clear display
+  List<int> buildClearDisplay() {
+    final msgId = nextMessageId;
+    final seq = nextSequenceId;
+    final msgIdVarint = encodeVarint(msgId);
+
+    final payload = [0x08, 0x00, 0x10, ...msgIdVarint];
+    return _addCrc([0xAA, 0x21, seq, payload.length + 2, 0x01, 0x01, 0x04, 0x20, ...payload]);
+  }
+
+  /// Activate display
+  List<int> buildActivateDisplay() {
+    final msgId = nextMessageId;
+    final seq = nextSequenceId;
+    final msgIdVarint = encodeVarint(msgId);
+
+    final payload = [0x08, 0x01, 0x10, ...msgIdVarint];
+    return _addCrc([0xAA, 0x21, seq, payload.length + 2, 0x01, 0x01, 0x81, 0x20, ...payload]);
+  }
+}
+
+/// Navigation direction enum
+enum NavigationDirection {
+  straight,
+  slightRight,
+  right,
+  sharpRight,
+  uTurn,
+  sharpLeft,
+  left,
+  slightLeft,
+  arrived,
 }

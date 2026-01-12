@@ -425,6 +425,209 @@ class BleService extends ChangeNotifier {
     print('Teleprompter text sent! Check your glasses.');
   }
 
+  // ============================================
+  // Dashboard / Widget Functions
+  // ============================================
+
+  /// Send dashboard widget (time, date, weather)
+  Future<void> sendDashboard({
+    String? time,
+    String? date,
+    String? weather,
+    int? temperature,
+  }) async {
+    if (_state != BleConnectionState.authenticated) {
+      throw Exception('Not authenticated');
+    }
+
+    print('Sending dashboard...');
+    await sendPacket(
+      _protocol.buildDashboardWidget(
+        time: time,
+        date: date,
+        weather: weather,
+        temperature: temperature,
+      ),
+      description: 'DASHBOARD',
+    );
+  }
+
+  // ============================================
+  // Quick Text / Notification Functions
+  // ============================================
+
+  /// Send quick text (short message display)
+  Future<void> sendQuickText(String text, {int duration = 5}) async {
+    if (_state != BleConnectionState.authenticated) {
+      throw Exception('Not authenticated');
+    }
+
+    print('Sending quick text...');
+    await sendPacket(
+      _protocol.buildQuickText(text, displayDuration: duration),
+      description: 'QUICK_TEXT',
+    );
+  }
+
+  /// Send notification
+  Future<void> sendNotification({
+    required String appName,
+    required String title,
+    String? message,
+    int count = 1,
+  }) async {
+    if (_state != BleConnectionState.authenticated) {
+      throw Exception('Not authenticated');
+    }
+
+    print('Sending notification...');
+    await sendPacket(
+      _protocol.buildNotification(
+        appName: appName,
+        title: title,
+        message: message,
+        notificationCount: count,
+      ),
+      description: 'NOTIFICATION',
+    );
+  }
+
+  // ============================================
+  // AI Functions
+  // ============================================
+
+  /// Send transcription text (speech-to-text display)
+  Future<void> sendTranscription(String text, {bool isFinal = false}) async {
+    if (_state != BleConnectionState.authenticated) {
+      throw Exception('Not authenticated');
+    }
+
+    await sendPacket(
+      _protocol.buildTranscription(text, isFinal: isFinal),
+      description: isFinal ? 'TRANSCRIPTION_FINAL' : 'TRANSCRIPTION',
+    );
+  }
+
+  /// Send AI response using 0x4E command (Official Even Demo App protocol)
+  Future<void> sendAIResponse(String response, {bool isStreaming = false}) async {
+    if (_state != BleConnectionState.authenticated) {
+      throw Exception('Not authenticated');
+    }
+
+    print('Sending AI response (0x4E command)...');
+
+    // Build packets using official 0x4E command format
+    final packets = _protocol.buildAIResponse(response, isStreaming: isStreaming);
+
+    // Send each packet with small delay
+    for (var i = 0; i < packets.length; i++) {
+      await sendPacket(
+        packets[i],
+        description: 'AI_0x4E_${i + 1}/${packets.length}',
+      );
+      // Small delay between packets
+      if (i < packets.length - 1) {
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+    }
+
+    print('AI response sent! (${packets.length} packets)');
+  }
+
+  /// Send simple AI response (single packet for short responses)
+  Future<void> sendAIResponseSimple(String response, {bool isComplete = true}) async {
+    if (_state != BleConnectionState.authenticated) {
+      throw Exception('Not authenticated');
+    }
+
+    print('Sending simple AI response...');
+    await sendPacket(
+      _protocol.buildAIResponseSimple(response, isComplete: isComplete),
+      description: isComplete ? 'AI_SIMPLE_COMPLETE' : 'AI_SIMPLE_STREAMING',
+    );
+  }
+
+  // ============================================
+  // Navigation Functions
+  // ============================================
+
+  /// Send navigation direction
+  Future<void> sendNavigation({
+    required NavigationDirection direction,
+    required String distance,
+    String? streetName,
+  }) async {
+    if (_state != BleConnectionState.authenticated) {
+      throw Exception('Not authenticated');
+    }
+
+    print('Sending navigation...');
+    await sendPacket(
+      _protocol.buildNavigation(
+        direction: direction,
+        distance: distance,
+        streetName: streetName,
+      ),
+      description: 'NAVIGATION',
+    );
+  }
+
+  // ============================================
+  // Settings Functions
+  // ============================================
+
+  /// Set display brightness (0-100)
+  Future<void> setBrightness(int level) async {
+    if (_state != BleConnectionState.authenticated) {
+      throw Exception('Not authenticated');
+    }
+
+    print('Setting brightness to $level...');
+    await sendPacket(
+      _protocol.buildBrightnessControl(level),
+      description: 'BRIGHTNESS',
+    );
+  }
+
+  /// Set display position offset
+  Future<void> setPosition({int x = 0, int y = 0}) async {
+    if (_state != BleConnectionState.authenticated) {
+      throw Exception('Not authenticated');
+    }
+
+    print('Setting position to ($x, $y)...');
+    await sendPacket(
+      _protocol.buildPositionControl(x: x, y: y),
+      description: 'POSITION',
+    );
+  }
+
+  /// Clear display
+  Future<void> clearDisplay() async {
+    if (_state != BleConnectionState.authenticated) {
+      throw Exception('Not authenticated');
+    }
+
+    print('Clearing display...');
+    await sendPacket(
+      _protocol.buildClearDisplay(),
+      description: 'CLEAR_DISPLAY',
+    );
+  }
+
+  /// Activate display
+  Future<void> activateDisplay() async {
+    if (_state != BleConnectionState.authenticated) {
+      throw Exception('Not authenticated');
+    }
+
+    print('Activating display...');
+    await sendPacket(
+      _protocol.buildActivateDisplay(),
+      description: 'ACTIVATE_DISPLAY',
+    );
+  }
+
   /// Disconnect from device
   Future<void> disconnect() async {
     await _responseSubscription?.cancel();
