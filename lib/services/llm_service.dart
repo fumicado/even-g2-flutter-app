@@ -115,7 +115,6 @@ class LlmService {
         'model': _model,
         'messages': messages,
         'max_completion_tokens': 150,
-        'temperature': 0.7,
       }),
     );
 
@@ -124,7 +123,37 @@ class LlmService {
     }
 
     final data = jsonDecode(response.body);
-    return data['choices'][0]['message']['content'] as String;
+
+    // Debug: print the full response structure
+    print('LLM Response: ${response.body}');
+
+    // Try GPT-5 Responses API format first (output_text or output)
+    if (data['output_text'] != null) {
+      return data['output_text'] as String;
+    }
+    if (data['output'] != null) {
+      // output might be a list of content items
+      final output = data['output'];
+      if (output is List && output.isNotEmpty) {
+        final firstOutput = output[0];
+        if (firstOutput['content'] != null) {
+          final content = firstOutput['content'];
+          if (content is List && content.isNotEmpty) {
+            return content[0]['text'] as String;
+          }
+        }
+      }
+      if (output is String) {
+        return output;
+      }
+    }
+
+    // Fallback to Chat Completions format
+    if (data['choices'] != null && (data['choices'] as List).isNotEmpty) {
+      return data['choices'][0]['message']['content'] as String;
+    }
+
+    throw Exception('Unknown response format: ${response.body}');
   }
 
   /// Stream chat response (for real-time display)
@@ -157,7 +186,6 @@ class LlmService {
       'model': _model,
       'messages': messages,
       'max_completion_tokens': 150,
-      'temperature': 0.7,
       'stream': true,
     });
 
